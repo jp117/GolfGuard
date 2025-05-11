@@ -66,12 +66,12 @@ def get_flag_status(score_differential, z_score, strokes_better):
     # Only flag if the score is better than expected (positive strokes_better)
     if strokes_better > 0:
         # Tier 1: Automatic Red Flag
-        if score_differential <= -1.0 or z_score >= 3.0:
+        if score_differential <= -1.0 or z_score >= 2.5:
             return ("🔺 RED FLAG", 
-                    "Likely sandbagging - Either scratch-level performance or 3+ standard deviations better than expected")
+                    "Likely sandbagging - Either scratch-level performance or 2.5+ standard deviations better than expected")
         
         # Tier 2: Review Flag
-        elif score_differential <= 0.0 or (z_score >= 2.0 and z_score < 3.0):
+        elif score_differential <= 0.0 or (z_score >= 1.5 and z_score < 2.5):
             return ("🟡 REVIEW", 
                     "Possible anomaly - Could be a career-best round or a fluke, especially in tournament play")
     
@@ -98,12 +98,20 @@ def calculate_probability_range(handicap_index, course_rating, course_slope, sco
     low_std_dev, high_std_dev = get_standard_deviation_range(handicap_index)
     
     # 5. Calculate Z-Scores for both ends of the range
-    low_z_score = strokes_better / high_std_dev  # Using high_std_dev gives lower probability
-    high_z_score = strokes_better / low_std_dev  # Using low_std_dev gives higher probability
+    low_z_score = strokes_better / high_std_dev  # Using high_std_dev gives lower z-score
+    high_z_score = strokes_better / low_std_dev  # Using low_std_dev gives higher z-score
     
     # 6. Calculate Probability range using normal distribution
-    low_probability = norm.sf(low_z_score)
-    high_probability = norm.sf(high_z_score)
+    # For better scores (positive strokes_better), we want the probability of being this good or better
+    # For worse scores (negative strokes_better), we want the probability of being this bad or worse
+    if strokes_better > 0:
+        # For good scores, use survival function (1 - CDF)
+        low_probability = norm.sf(low_z_score)
+        high_probability = norm.sf(high_z_score)
+    else:
+        # For bad scores, use CDF directly
+        low_probability = norm.cdf(low_z_score)
+        high_probability = norm.cdf(high_z_score)
     
     # Ensure probabilities are never 0
     low_probability = max(low_probability, 1e-10)
@@ -135,23 +143,35 @@ def main():
     mid_prob = (low_prob + high_prob) / 2
     
     # Calculate odds ranges (1 in X)
-    low_odds = round(1 / high_prob)  # Higher probability = lower odds
-    high_odds = round(1 / low_prob)  # Lower probability = higher odds
+    # Note: Higher probability = lower odds (1 in X)
+    best_odds = round(1 / low_prob)  # Best case = lowest probability = highest odds
+    worst_odds = round(1 / high_prob)  # Worst case = highest probability = lowest odds
     mid_odds = round(1 / mid_prob)
     
     # Calculate percentage chance ranges
-    low_percentage = low_prob * 100
-    high_percentage = high_prob * 100
+    best_percentage = low_prob * 100
+    worst_percentage = high_prob * 100
     mid_percentage = mid_prob * 100
     
     # Get standard deviation range
     low_std_dev, high_std_dev = get_standard_deviation_range(handicap_index)
     
-    # Calculate z-score
-    z_score = calculate_z_score(handicap_index, course_rating, course_slope, score)
+    # Calculate z-scores for all scenarios
+    # For better scores (positive strokes_better):
+    # - Best case uses high_std_dev (gives lower z-score)
+    # - Worst case uses low_std_dev (gives higher z-score)
+    if strokes_better > 0:
+        best_z_score = strokes_better / high_std_dev
+        worst_z_score = strokes_better / low_std_dev
+    else:
+        # For worse scores (negative strokes_better), reverse the logic
+        best_z_score = strokes_better / low_std_dev
+        worst_z_score = strokes_better / high_std_dev
     
-    # Get flag status
-    flag_level, flag_explanation = get_flag_status(score_differential, z_score, strokes_better)
+    mid_z_score = strokes_better / ((low_std_dev + high_std_dev) / 2)
+    
+    # Get flag status (using midpoint z-score for flagging)
+    flag_level, flag_explanation = get_flag_status(score_differential, mid_z_score, strokes_better)
     
     # Print results
     print("\nResults:")
@@ -159,11 +179,16 @@ def main():
     print(f"Score: {score} (Expected Score: {expected_score:.1f})")
     print(f"Performance: {abs(strokes_better):.1f} strokes {'better' if strokes_better > 0 else 'worse'} than expected")
     print("\nProbability Analysis:")
-    print(f"Best-case odds: 1 in {low_odds:,} ({low_percentage:.2f}% chance)")
-    print(f"Midpoint odds:  1 in {mid_odds:,} ({mid_percentage:.2f}% chance)")
-    print(f"Worst-case odds: 1 in {high_odds:,} ({high_percentage:.2f}% chance)")
+    print(f"Best-case scenario (most optimistic):")
+    print(f"  - Odds: 1 in {best_odds:,} ({best_percentage:.2f}% chance)")
+    print(f"  - Z-Score: {best_z_score:.2f} standard deviations")
+    print(f"Midpoint scenario:")
+    print(f"  - Odds: 1 in {mid_odds:,} ({mid_percentage:.2f}% chance)")
+    print(f"  - Z-Score: {mid_z_score:.2f} standard deviations")
+    print(f"Worst-case scenario (most conservative):")
+    print(f"  - Odds: 1 in {worst_odds:,} ({worst_percentage:.2f}% chance)")
+    print(f"  - Z-Score: {worst_z_score:.2f} standard deviations")
     print(f"\n{flag_level}: {flag_explanation}")
-    print(f"Z-Score: {z_score:.2f} (Standard deviations better than expected)")
 
 if __name__ == "__main__":
     main() 
